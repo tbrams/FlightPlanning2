@@ -1,0 +1,927 @@
+<script>
+    var lastMarkerClicked = null;
+    var ignoreEvents = false;
+
+    var myMarkers = [];
+    var myNames = [];
+    var myRevGeos = [];
+    var myMags = [];
+    var myVORs = [];
+
+
+    var path = [];
+    var map = null;
+    var bounds = null;
+    var infoWindow = null;
+    var geocoder;
+    var address = null;
+    var indexA = null;
+    var indexB = null;
+
+    var TripSelected=0;
+    var tripIndex=[];
+
+    
+    function newInit() {
+       console.log("Map API loaded...");
+    }
+
+
+    function initMap() {
+        map = new google.maps.Map(document.getElementById('map'), {
+            zoom: 11,
+            center: {
+                lat: 55.58552,
+                lng: 12.1313
+            }
+        });
+        bounds = new google.maps.LatLngBounds();
+        geocoder = new google.maps.Geocoder;
+
+        poly = new google.maps.Polyline({
+            strokeColor: '#0000DD',
+            strokeOpacity: 1.0,
+            editable: true,
+            strokeWeight: 3
+        });
+        // we need to track two kind of events. One for tracking points being moved
+        // and one for tracking when a new point is inserted because a mid point has been moved
+        // later we might consider adding a remove_at function as well
+        google.maps.event.addListener(poly.getPath(), "insert_at", pia);
+        google.maps.event.addListener(poly.getPath(), "set_at", psa);
+        google.maps.event.addListener(poly, "rightclick", deletePoint);
+
+        poly.setMap(map);
+
+        map.addListener('click', placeMarker);
+
+        // Create the DIV to hold the control and call SaveControl()
+        var saveControlDiv = document.createElement('div');
+        var saveControl = new SaveControl(saveControlDiv, map);
+
+        saveControlDiv.index = 1;
+        map.controls[google.maps.ControlPosition.TOP_RIGHT].push(saveControlDiv);
+
+        // load Radio Navigation Aids etc
+        google.script.run.withSuccessHandler(
+            function(result) {
+                myVORs = result;
+                console.log("Server side read done - plotting VORs");
+                plotVORs();
+            }).readVORs();
+
+        // if there is a plan on file, reload it
+        google.script.run.withSuccessHandler(
+            function(result) {
+                console.log("Server side read done - recreating route");
+                oldPlan = result
+                recreateRoute(oldPlan);
+            }).readCoords();
+
+
+    };
+
+
+
+    /**
+     * Place special VOR markers on the maps
+     *
+     */
+    function plotVORs() {
+        for (var i = 0; i < myVORs.length; i++) {
+            var mylat = convertToDec(myVORs[i][2]);
+            var mylon = convertToDec(myVORs[i][3]);
+            console.log("mylat: " + mylat);
+            console.log("mylon: " + mylon);
+
+            var marker = new google.maps.Marker({
+                position: {
+                    lat: mylat,
+                    lng: mylon
+                },
+                title: myVORs[i][1],
+                icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    color: '#ff0000',
+                    scale: 4
+                },
+                map: map
+            });
+        }
+    }
+
+    /*
+     * convert position from degrees, minutes and seconds to
+     * decimal format used in Google Maps.
+     *
+     * Accepts input format like these:
+     *    "570613N"
+     *   "0095944E"
+     */
+    function convertToDec(dms) {
+        if (dms[dms.length - 1] == "E") {
+            dd = parseInt(dms.substr(0, 3), 10);
+            mm = parseInt(dms.substr(3, 2), 10);
+            ss = parseInt(dms.substr(5, 2), 10);
+        } else {
+            dd = parseInt(dms.substr(0, 2), 10);
+            mm = parseInt(dms.substr(2, 2), 10);
+            ss = parseInt(dms.substr(4, 2), 10);
+        }
+        return dd + mm / 60 + ss / 3600;
+    }
+
+
+    /*
+     * Recreate the route from the coordinates recorded previously
+     * The parameter is a two element array - first element is the short trip title
+     * and the other is an array of WPs
+     *
+     */
+    function recreateRoute(result) {
+        var shortTitle=result[0];
+        var r=result[1];
+        var path = poly.getPath();
+        for (var i = 0; i < r.length; i++) {
+            var name = r[i][1];
+            var declination = r[i][4];
+
+            // create marker and graph
+            path.push(new google.maps.LatLng(r[i][2], r[i][3]));
+
+
+            // Keep the good WP name and magnetic declination
+            console.log("reload: name before assign myNames[i] " + myNames[i] + " i=" + i);
+            myNames[i] = name;
+            myMags[i] = declination;
+            console.log("reload: name after myNames[i] " + myNames[i]);
+
+            // Update the menu item as well
+            $("li:nth-child(" + (i + 1) + ")").text(name);
+
+        }
+    }
+
+    /**
+     * The SaveControl function adds a control to the map that allow us
+     * to save a copy of the route to a database or a spreadsheet
+     *
+     * This constructor takes the control DIV as an argument.
+     * @constructor
+     */
+    function SaveControl(controlDiv, map) {
+
+        // Set CSS for the control border.
+        var controlUI = document.createElement('div');
+        controlUI.style.backgroundColor = '#fff';
+        controlUI.style.border = '2px solid #fff';
+        controlUI.style.borderRadius = '10px';
+        controlUI.style.boxShadow = '0 2px 6px rgba(0,0,0,.3)';
+        controlUI.style.cursor = 'pointer';
+        controlUI.style.marginTop = '10px';
+        controlUI.style.marginRight = '10px';
+        controlUI.title = 'Click to save the route';
+        controlDiv.appendChild(controlUI);
+
+        // Set CSS for the control interior.
+        var controlText = document.createElement('div');
+        controlText.style.color = 'rgb(25,25,25)';
+        controlText.style.fontFamily = 'Roboto,Arial,sans-serif';
+        controlText.style.fontSize = '12px';
+        controlText.style.textAlign = 'center';
+        controlText.style.lineHeight = '25px';
+        controlText.style.paddingLeft = '5px';
+        controlText.style.paddingRight = '5px';
+        controlText.innerHTML = 'Save Route';
+        controlUI.appendChild(controlText);
+
+        /*
+         * Save WPs to spreadsheet
+         */
+
+        controlUI.addEventListener('click', function() {
+
+            var infowindow2 = new google.maps.InfoWindow();
+            var formStr = "<input type='text' id='shortDescr' value='Short trip description' /><input type='button' value='submit' onclick='addShortDescription();' />"
+            map.panTo(myMarkers[0].getPosition());
+            map.fitBounds(bounds);
+
+            infowindow2.setContent(formStr);
+            infowindow2.open(map, myMarkers[0]);
+            console.log("infowindow should be open now");
+
+        });
+
+
+        // The second control is for the button to see the entire route
+        var controlUI2 = document.createElement('div');
+        controlUI2.style.backgroundColor = '#fff';
+        controlUI2.style.border = '2px solid #fff';
+        controlUI2.style.borderRadius = '10px';
+        controlUI2.style.boxShadow = '0 2px 6px rgba(0,0,0,.3)';
+        controlUI2.style.cursor = 'pointer';
+        controlUI2.style.marginTop = '10px';
+        controlUI2.style.marginRight = '10px';
+        controlUI2.title = 'Click to view all route';
+        controlDiv.appendChild(controlUI2);
+
+        var controlText2 = document.createElement('div');
+        controlText2.style.color = 'rgb(25,25,25)';
+        controlText2.style.fontFamily = 'Roboto,Arial,sans-serif';
+        controlText2.style.fontSize = '12px';
+        controlText2.style.textAlign = 'center';
+        controlText2.style.lineHeight = '25px';
+        controlText2.style.paddingLeft = '5px';
+        controlText2.style.paddingRight = '5px';
+        controlText2.innerHTML = 'View all';
+
+        controlUI2.appendChild(controlText2);
+
+        // Event handler for viewing all route
+        controlUI2.addEventListener('click', function() {
+            console.log("View total route");
+            if (myMarkers.length > 1) {
+                map.panTo(myMarkers[0].getPosition());
+                map.fitBounds(bounds);
+            } else
+                map.setZoom(10);
+        });
+    }
+
+
+    function addShortDescription() {
+
+        var myTitle = $('#shortDescr').val();
+        console.log("Short description is: " + myTitle);
+        saveRoute(myTitle);
+    }
+
+
+    /*
+     * Save everything here
+     * and then close the map
+     *
+     */
+    function saveRoute(shortTitle) {
+
+        console.log("prepare data for spreadsheet");
+
+        // this is the array we need to pass to the server side
+        var myArr = [];
+
+        // write first WP without distance and bearing
+        var WP = 0;
+        var name = myNames[0];
+        console.log("myNames[0]:" + myNames[0]);
+        var lat = myMarkers[0].getPosition().lat();
+        var lon = myMarkers[0].getPosition().lng();
+        var declination = myMags[0];
+        var dist = "";
+        var bearing = "";
+
+        var row = [WP, name, lat, lon, dist, bearing, declination];
+        myArr.push(row);
+
+        var fromPos = 0;
+        var toPos = 0;
+        for (var i = 1; i < myMarkers.length; i++) {
+            WP = i;
+            name = myNames[i];
+            lat = myMarkers[i].getPosition().lat();
+            lon = myMarkers[i].getPosition().lng();
+
+            fromPos = myMarkers[i - 1].getPosition();
+            toPos = myMarkers[i].getPosition();
+
+            dist = google.maps.geometry.spherical.computeDistanceBetween(fromPos, toPos);
+            bearing = google.maps.geometry.spherical.computeHeading(fromPos, toPos);
+            // convert distance from meters to nautical miles
+            dist = dist / 1852;
+            // convert negative bearing to something in the interval 0..360
+            bearing = (360 + bearing) % 360;
+
+            declination = myMags[i];
+
+            var row = [WP, name, lat, lon, dist, bearing, declination];
+            myArr.push(row);
+            console.log('From point ' + (i - 1) + " to pos " + i + " done.");
+        }
+
+        // myArr matrix ready, let's write that to the sheet
+        google.script.run.withSuccessHandler(
+            function(result) {
+                console.log("Server side write done");
+            }).writeCoords(myArr, shortTitle);
+
+
+        // Create navigation table
+        google.script.run.withSuccessHandler(
+            function(result) {
+                console.log("Navigation table written");
+            }).writeNavTable(myArr);
+
+        /// Wait 2 seconds - then close dialog
+        setTimeout(function() {
+            google.script.host.close();
+        }, 2000);
+
+
+    };
+
+
+    /*
+     * Find the marker index based on coordinates on the map.
+     * Return that or -1 if not found.
+     */
+    function lookupMarker(latLng) {
+        for (var i = 0; i < myMarkers.length; i++) {
+            if (myMarkers[i].getPosition().equals(latLng)) {
+                return i;
+            }
+        }
+        return -1; // error, marker location not found
+    }
+
+
+    /*
+     * Delete Marker, Event Handler
+     */
+    function deleteMarker(e) {
+        var n = lookupMarker(e.latLng);
+        if (n == 0) {
+            console.log("Cannot remove starting point or marker");
+            return;
+        }
+
+        console.log("Delete marker event fired, pos: " + e.latLng);
+        deleteMarkerNumber(n)
+        deletePointNumber(n)
+    }
+
+    /*
+     * Function used by both the Delete Marker, Event handler and the Delete Point Event handler.
+     * Renove marker with index n from map and data arrays along with associated data and menu
+     * entries
+     */
+    function deleteMarkerNumber(n) {
+        // remove marker from the map
+        myMarkers[n].setMap(null);
+
+        // remove WP from list
+        $("li").eq(n).remove();
+
+        // remove from arrays
+        myMarkers.splice(n, 1);
+        myNames.splice(n, 1);
+        myRevGeos.splice(n, 1);
+        myMags.splice(n, 1);
+
+        // for debugging only
+        console.log("Deleted marker number: " + n);
+        whatIsLeftInStack();
+    }
+
+    /*
+     * Function used by both the Delete Marker, Event handler and the Delete Point Event handler.
+     * Renove point number n from the polyline
+     */
+    function deletePointNumber(n) {
+        var path = poly.getPath();
+        path.removeAt(n);
+
+        console.log("polyline point removed: " + n)
+    }
+
+
+    /*
+     * Delete point event handler
+     */
+    function deletePoint(e) {
+        if (!e.vertex) {
+            console.log("Delete point event fired, bad point - cancelling");
+            return;
+        }
+
+        console.log("Delete point event fired, point number " + e.vertex);
+        deletePointNumber(e.vertex)
+        deleteMarkerNumber(e.vertex);
+
+    }
+
+    /*
+     * Dump all short names on the stack
+     */
+    function whatIsLeftInStack() {
+        // debug ... what is left
+        console.log("Here is what we have left on file:");
+        for (var i = 0; i < myNames.length; i++) {
+            console.log("myNames[" + i + "]: " + myNames[i]);
+        }
+    }
+
+
+
+    function placeMarker(e) {
+        // Because path is an MVCArray, we can simply append a new coordinate and it will automatically appear.
+        var path = poly.getPath();
+        path.push(e.latLng);
+    }
+
+
+    /**
+     * PathInsertAt Event Handler
+     *
+     */
+    function pia(n) {
+        if (ignoreEvents) return; // if a rebuild in progress, return
+
+        console.log("Path insertAt fired, point #: " + n);
+
+        // Get the point position so we can create a new marker
+        var path = poly.getPath();
+        var pos = path.getAt(n);
+        console.log("Position: " + pos);
+
+        // create new marker
+        var marker = new google.maps.Marker({
+            position: pos,
+            draggable: true,
+            map: map
+        });
+
+        // create entry for marker in array
+        if (n < myMarkers.length)
+            myMarkers.splice(n, 0, marker);
+        else
+            myMarkers[n] = marker;
+
+        console.log("myMarkers.length: " + myMarkers.length);
+
+        // extend the bounds if necessary
+        bounds.extend(pos);
+
+        // create name
+        if (typeof myNames[n] === 'undefined' || myNames[n] === null) {
+            var name = "WP " + n;
+        }
+
+        if (n < myNames.length) {
+            var name = "Temp WP";
+            myNames.splice(n, 0, name);
+        } else {
+            var name = "WP " + n;
+            myNames[n] = name;
+            console.log("myNames[" + n + "]: " + myNames[n]);
+        }
+        console.log("myNames.length: " + myNames.length);
+
+        // Magnetic declination, check if we already have that on file from the loading session
+        google.script.run.withSuccessHandler(
+            function(declination) {
+                console.log("Declination:");
+                console.log("n: " + n);
+                console.log("myMags.length: " + myMags.length);
+                if (myMarkers.length > myMags.length) {
+                    myMags.splice(n, 0, declination);
+                    console.log("declination spliced into array");
+                } else {
+                    console.log("myMags[n]: " + myMags[n]);
+                    if ((typeof myMags[n + 1] === 'undefined' || myMags[n + 1] === null)) {
+                        myMags[n] = declination;
+                        console.log("Updated myMags[n] because it was undefined...");
+                    }
+                }
+            }).getDeclination(pos.lat(), pos.lng());
+
+        // create list entry
+        newLI = $("<li />")
+            .html(name)
+            .click(function() {
+                return function(n, pos) {
+                    console.log("Menu #" + n + " clicked, pos: " + pos);
+                    map.panTo(pos);
+                    map.setZoom(12);
+                }(n, pos)
+
+            });
+
+        // Insert the new menu item at the right place in the list. That is, if this is the
+        // first WP, create a child node, otherwise insert it after it's previous number.
+        if (n == 0)
+            $('ul#list').append(newLI);
+        else
+            $('ul#list li').eq(n - 1).after(newLI);
+
+        adrLookup(pos, n);
+
+        marker.addListener('dragend', mde);
+        marker.addListener("rightclick", deleteMarker);
+        marker.addListener("click", clickMarker);
+        //  marker.addListener("mouseover", hoverMarker);
+
+        map.panTo(pos);
+    }
+
+    /**
+     * PathSetAt Event Handler
+     *
+     * Executes when polyline point is dragged to new position and
+     * will be called when a marker is dragged to a new position as well
+     * as a side effect because the point will also be moved...
+     *
+     */
+    function psa(n) {
+        if (ignoreEvents) return; // if rebuild in progress, return
+
+        var path = poly.getPath();
+        var pos = path.getAt(n);
+        console.log("Path SetAt event fired for point #" + n + " @" + pos);
+
+        // update marker position
+        myMarkers[n].setPosition(pos);
+
+        // update the magnetic declination
+        google.script.run.withSuccessHandler(
+            function(declination) {
+                myMags[n] = declination;
+                console.log("Declination: " + declination);
+            }).getDeclination(pos.lat(), pos.lng());
+
+
+        // update menu here
+        $("ul#list li:nth-child(" + (n + 1) + ")").unbind('click');
+        $("ul#list li:nth-child(" + (n + 1) + ")")
+            .click(function() {
+                return function(n, pos) {
+                    console.log("Menu #" + n + " clicked => pos: " + pos);
+                    map.panTo(pos);
+                    map.setZoom(12);
+                }(n, pos)
+            });
+    }
+
+    /**
+     * MarkerDragEnd Event Handler
+     *
+     */
+    function mde(e) {
+        var latLng = e.latLng;
+        var i = lookupMarker(latLng);
+        console.log("Marker dragEnd event fired for marker #" + i + " @" + latLng);
+
+        // Update polyline to new position
+        ignoreEvents = true;
+        var path = poly.getPath();
+        path.setAt(i, e.latLng);
+        ignoreEvents = false;
+
+        // Update myRevGeos array
+        adrLookup(e.latLng, i);
+    }
+
+    /**
+     * Do a reverse Geo lookup and store the result in myRevGeos at the index
+     * given by number. If there is no result, just update the array with a blank.
+     *
+     */
+    function adrLookup(latLng, number) {
+        myRevGeos[number] = "";
+        geocoder.geocode({
+                'location': latLng
+            },
+            function(results, status) {
+                if (status === 'OK') {
+                    if (results[0]) {
+                        myRevGeos[number] = results[0].formatted_address;
+                    } else {
+                        console.log("adrLookup: Nothing found");
+                    };
+                    console.log("adrLookup: " + latLng + " @" + myRevGeos[number]);
+                } else {
+                    console.log('adrLookup, Error: Geocoder failed due to: ' + status);
+                }
+            });
+    }
+
+
+    /**
+     * Marker Hover, Event Handler
+     * Not used - it was annoying ...
+     */
+    function hoverMarker(e) {
+        var i = lookupMarker(e.latLng);
+        console.log("Hovering over marker #" + i);
+        contentString = '<p>' + myNames[i] + '</p>';
+        labelWindow = new google.maps.InfoWindow({
+            content: contentString
+        });
+
+        labelWindow.setContent(contentString);
+        labelWindow.open(map, myMarkers[i]);
+
+        setTimeout(function() {
+            labelWindow.close();
+        }, 1000); // close after 2 secs
+    }
+
+
+    /**
+     * Marker Click, Event Handler
+     *
+     */
+    function clickMarker(e) {
+        var i = lookupMarker(e.latLng);
+        console.log("Marker #" + i + " clicked");
+        // Record what marker we want to update (used in the UpdateData event handler)
+        lastMarkerClicked = i;
+
+        // get VOR radial info
+        var vorStr = '<p class="header">Navigation</p>';
+        var vors = lookupRadials(e.latLng);
+        for (var i = 0; i < vors.length; i++) {
+            vorStr += '<div class="VORrow">';
+            vorStr += '  <span class="VORname">' + vors[i][0] + '</span>';
+            vorStr += '  <span class="VORdetail">' + vors[i][1] + ' degrees</span>';
+            vorStr += '  <span class="VORdetail">' + vors[i][2] + ' nm</span>';
+            vorStr += '</div>';
+        }
+
+        /// Change the content of the info window to show marker name and address
+        var contentString = '<div id="content">' +
+            'Name: <input type="text" value="' + myNames[lastMarkerClicked] + '" id="name"/>' +
+            '<input type="button" class="iButton" value="Update" onclick="updateData()"/>' +
+            '<p class="header">Address</p>' +
+            '<p>' + myRevGeos[lastMarkerClicked] + '</p>' +
+            '<div>' + vorStr + '</div>' +
+            '<p class="infoMagn">Magnetisk varians: ' + myMags[lastMarkerClicked] + '</p>' +
+            '</div>';
+
+        infoWindow = new google.maps.InfoWindow({
+            content: contentString
+        });
+        infoWindow.setContent(contentString);
+
+        // Open the name editor and await catching the updateData signal eventually
+        infoWindow.open(map, myMarkers[lastMarkerClicked]);
+
+    }
+
+
+    function updateTripList() {
+    
+       tripIndex=[];
+       $('#Trips').html("");
+
+       // load trip index table and prepare data for the dialog
+       google.script.run.withSuccessHandler(
+           function(result) {
+              tripIndex = result;
+              console.log("Server side read done - entering trips into dialog");
+              for (var i=0;i<tripIndex.length;i++){
+                   newLI=$("<li />") 
+                   .html(tripIndex[i][0]+" ("+tripIndex[i][3]+" nm)") 
+                  .click(function(n){
+                         return function() {
+                            console.log("TripIndex #"+n+" clicked");
+                            tripSelected=n+1;
+                            $('#LdelBtn').prop('disabled', false);
+                            $('#LldBtn').prop('disabled', false);
+                            updateSelected(n);
+                         }
+                  }(i));
+                  $('#Trips').append(newLI);
+              }
+              
+              google.script.run.withSuccessHandler( 
+                 function(result){
+                    $('#selectedTrip').text(result);
+                 }
+              ).readTripTitle();
+              
+       }).getTripsOnFile();        
+    }
+
+
+    $(document).ready(function() {
+       console.log("Document ready...");       
+
+       
+       // Startup Dialog - disable Delete and Load Buttons
+       $('#LdelBtn').prop('disabled', true);
+       $('#LldBtn').prop('disabled', true);
+
+       // load trip index table and prepare data for the dialog
+       updateTripList();
+       
+       // Open Dialog - Clear Current Trip Button Handler
+       $('#clrBtn').click(function(){
+          console.log("clear...");
+          google.script.run.withSuccessHandler(
+              function(result) {
+                  tripIndex = result;
+                  console.log("Server side clearCurrentPlan done");
+                  $('#startup').slideUp();
+                  $('#map').removeClass("hidden");
+                  initMap();
+              }
+          ).clearCurrentPlan();
+       });
+
+       // Open Dialog - Load Trip Button Handler
+       $('#ldBtn').click(function(){
+         console.log("load...");
+         $('#startup').slideUp();
+         $('#map').removeClass("hidden");
+         initMap();
+       });
+       
+       $body = $("body");
+       
+       // Open Dialog - Load Trip from List Button Handler
+       $('#LdelBtn').click(
+           function(){
+              console.log("delete in progress...");
+              $body.addClass("loading");
+              google.script.run.withSuccessHandler(
+                 function(result) {
+                    console.log("Trip #"+tripSelected+" deleted");
+                    updateTripList();
+                    $body.removeClass("loading");
+                 }
+              ).deleteTrip(tripSelected);              
+           }
+       );
+
+       // Open Dialog - Delete Trip from List Button Handler
+       $('#LldBtn').click(
+          function(){
+              console.log("Loading....#"+tripSelected)
+              $body.addClass("loading");
+              google.script.run.withSuccessHandler(
+                 function(result) {
+                    console.log("Trip #"+tripSelected+" loaded");
+                    updateTripList();
+                    $body.removeClass("loading");
+                    
+                    $('#startup').slideUp();
+                    $('#map').removeClass("hidden");
+                    initMap();
+
+                 }
+              ).loadTrip(tripSelected);              
+          }
+       );
+       
+       
+       // Detect start drag and end drag on  WP list entries
+       $("#list").sortable({
+            start: function(event, ui) {
+                indexA = ui.item.index();
+                console.log("List, Start drag index: " + indexA);
+            },
+            stop: function(event, ui) {
+                indexB = ui.item.index();
+                if (indexA != indexB) {
+                    console.log("List, Stop drag index: " + indexB);
+                    updateMovedRecords(indexA, indexB);
+                }
+            }
+        });
+
+       $("#list").disableSelection(); // not sure why I have that here anymore?
+
+
+
+});   // End of Document Ready section
+    
+    
+/*
+ * Event handler for selecting items in the startup dialog
+ *
+ */  
+function updateSelected(n) {
+   $('#Trips li').each(function() {
+       var index = $(this).index();
+       if (index ==n) 
+          $(this).addClass("selected");
+       else
+          $(this).removeClass("selected");
+   });
+}
+
+
+
+    /*
+     * Event handler for updating label
+     *
+     */
+    function updateData() {
+        var shortName = document.getElementById("name").value; // Consider escaping this text
+        console.log("updateData, shortName:" + shortName);
+        if (lastMarkerClicked !== null) {
+            myNames[lastMarkerClicked] = shortName;
+
+            // update list entry as well, leave the "Overview" untouched though
+            $("li").eq(lastMarkerClicked).text(shortName);
+
+            lastMarkerClicked = null;
+            infoWindow.close();
+            console.log("updateData done");
+        }
+    }
+
+    /*
+     * Helper function making sure we move things correctly after dragging WPs in the
+     * WP list. This function takes and array to be modified and a from-position and a
+     * to-position number.
+     */
+    function moveItems(array, from, to) {
+        console.log("Moving element from: " + from + " and inserting at: " + to);
+        if (from < to) {
+            array.splice(to + 1, 0, array[from]);
+            array.splice(from, 1);
+        } else {
+            array.splice(to, 0, array[from]);
+            array.splice(from + 1, 1);
+        }
+    }
+
+    /*
+     * Event handler for drag-end used by the List with WPs
+     */
+    function updateMovedRecords(a, b) {
+        console.log("UpdateMovedRecords from: " + a + ", to: " + b);
+
+        moveItems(myMarkers, a, b);
+        moveItems(myNames, a, b);
+        moveItems(myRevGeos, a, b);
+        moveItems(myMags, a, b);
+
+        // Then rebuild the path, set a global flag to avoid triggering unecessary insert events
+        ignoreEvents = true;
+
+        var path = poly.getPath();
+        path.clear();
+        for (var i = 0; i < myMarkers.length; i++) {
+            path.push(myMarkers[i].getPosition());
+            bounds.extend(myMarkers[i].getPosition());
+        }
+        ignoreEvents = false;
+
+        console.log("updateMovedRecords, done");
+        whatIsLeftInStack();
+    }
+
+
+    /*
+     * Lookup and return the official magnetic devication from noaa.gov
+     *
+     */
+    function lookupMag(lat, lon) {
+        var url = "https://www.ngdc.noaa.gov/geomag-web/calculators/calculateIgrfgrid?lat1=" + lat + "&lat2=" + lat + "&lon1=" + lon + "&lon2=" + lon +
+            "&latStepSize=0.1&lonStepSize=0.1&magneticComponent=d&resultFormat=xml";
+        var declination;
+        $.get(url, function(data, status) {
+            console.log("Status: " + status);
+            console.dir(data);
+            declination = $(data).find('declination').text();
+        });
+        return declination;
+    }
+
+
+    function lookupRadials(toPos) {
+        var distArr = [];
+        for (var i = 0; i < myVORs.length; i++) {
+            var fromPos = new google.maps.LatLng(convertToDec(myVORs[i][2]), convertToDec(myVORs[i][3]));
+            distance = google.maps.geometry.spherical.computeDistanceBetween(fromPos, toPos) / 1852;
+            radial = (360 + google.maps.geometry.spherical.computeHeading(fromPos, toPos)) % 360;
+            distArr.push([distance, radial, myVORs[i][1]]);
+        }
+        
+        // sort distArr
+        var result = [];
+        distArr.sort(sortFunction);
+        for (var i = 0; i < 3; i++) {
+            console.log("VOR: " + distArr[i][2]);
+            console.log("Distance: " + distArr[i][0]);
+            console.log("Radial: " + distArr[i][1]);
+            console.log("");
+            // push result in a different column order for presentation
+            result.push([distArr[i][2], distArr[i][1].toFixed(0), distArr[i][0].toFixed(1)]);
+        }
+        return result;
+    }
+
+    /**
+     * Internal sort function needed for multidimensional arrays. This one
+     * will sort on columns 0 in increasing order
+     *
+     */
+    function sortFunction(a, b) {
+        if (a[0] === b[0])
+            return 0;
+        else
+            return (a[0] < b[0]) ? -1 : 1;
+    }
+</script>

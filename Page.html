@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <link rel="stylesheet" href="https://ssl.gstatic.com/docs/script/css/add-ons1.css">
+    <?!= include('Page.css'); ?>
+  </head>
+
+<body>  
+<div id="startup">
+   <div class="outer"><p class="header">Current plan</p>
+   <div id="selectedTrip" class="selectedTrip"></div></div>
+   <div class="right">
+      <input id="clrBtn" type="submit" value="Clear"/>
+      <input id="ldBtn" type="submit" value="Load"/>
+   </div>
+   
+   <div class="listSection">
+     <p class="header">On file</p>
+     <p>Click on a trip desciption to select it</p>
+     
+     <ul id="Trips"></ul>
+     
+     <div class="right">
+        <input id="LdelBtn" type="submit" value="Delete"/>
+        <input id="LldBtn" type="submit" value="Load"/>
+     </div>
+   </div>
+</div>
+   
+<ul id="list"></ul>
+   
+<div id="map" class="hidden">
+      And here comes the rest of the text
+</div>
+
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCiAEA1ei4brEJCuPoTAN0UAf3c2TbEKUw&libraries=geometry&callback=newInit"
+    async defer></script>
+ <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+ <script src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/jquery-ui.min.js"></script>
+
+   <?!= include('Page.js'); ?>
+   <div id="spinnner" class="modal"><!-- Place at bottom of page --></div>
+</body>
+</html>
+
+

@@ -1,0 +1,99 @@
+<style>
+/* Always set the map height explicitly to define the size of the div
+ * element that contains the map. */
+#map {
+       height: 100%;
+    }
+/* Optional: Makes the sample page fill the window. */
+html, body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+    }
+#list { float:left;
+    width:100px;
+    background:#eee; 
+    list-style:none;
+     margin: 0; 
+     padding: 0;
+    } 
+#list li {padding:10px;} 
+#list li:hover {
+   background:#ddd;
+   cursor:pointer;
+   cursor:hand; 
+}
+
+.iButton {margin-left:5px; float:right}
+#name {font-size:12px;}
+
+.VORdetail { width: 150px; float:left;}
+.VORname { width: 150px;float:left; }
+.VORrow { display:block; width:450px;}
+.infoMagn {padding-top:10px;clear: left;}
+.header {font-weight:bold;  font-size:12pt;}
+
+#startup {
+  width:350px;
+}
+.hidden {
+    visibility:hidden;
+}
+
+.listSection {
+  margin-top:35px;
+}
+.selected {
+  background-color:#dddddd;  
+}
+
+.outer{
+  width:100%;
+  padding-left:5px;
+  padding-top:5px;
+}
+.selectedTrip {
+  display: block;
+  padding:5px;
+  background-color:#dddddd;
+  margin-top:10px;
+  margin-bottom:10px;
+}
+.right {
+  float:right;
+}
+
+/* Start by setting display:none to make this hidden.
+   Then we position it in relation to the viewport window
+   with position:fixed. Width, height, top and left speak
+   for themselves. Background we set to 80% white with
+   our animation centered, and no-repeating */
+.modal {
+    display:    none;
+    position:   fixed;
+    z-index:    1000;
+    top:        0;
+    left:       0;
+    height:     100%;
+    width:      100%;
+    background: rgba( 255, 255, 255, .8 ) 
+                url('https://i.stack.imgur.com/FhHRx.gif') 
+                50% 50% 
+                no-repeat;
+}
+
+/* When the body has the loading class, we turn
+   the scrollbar off with overflow:hidden */
+body.loading {
+    overflow: hidden;   
+}
+
+/* Anytime the body has the loading class, our
+   modal element will be visible */
+body.loading .modal {
+    display: block;
+}
+
+
+
+</style>
